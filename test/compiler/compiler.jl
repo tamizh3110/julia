@@ -1792,3 +1792,45 @@ test28079(p, n, m) = h28079(Foo28079(), Base.pointerref, p, n, m)
 cinfo_unoptimized = code_typed(test28079, (Ptr{Float32}, Int, Int); optimize=false)[].first
 cinfo_optimized = code_typed(test28079, (Ptr{Float32}, Int, Int); optimize=true)[].first
 @test cinfo_unoptimized.ssavaluetypes[end-1] === cinfo_optimized.ssavaluetypes[end-1] === Float32
+
+# issue #00000 (TODO replace issue number)
+function f00000(b::Bool)
+    i = 1
+    while i > b
+        i -= 1
+    end
+    if b end
+    return i + 1
+end
+code00000 = @code_lowered(f00000(false)).code
+oldcode00000 = deepcopy(code00000)
+ssachangemap = fill(0, length(code00000))
+labelchangemap = fill(0, length(code00000))
+worklist = Int[]
+for i in 1:length(code00000)
+    stmt = code00000[i]
+    if Base.Meta.isexpr(stmt, :gotoifnot)
+        push!(worklist, i)
+        ssachangemap[i] = 1
+        if i < length(code00000)
+            labelchangemap[i + 1] = 1
+        end
+    end
+end
+Core.Compiler.renumber_ir_elements!(code00000, ssachangemap, labelchangemap)
+@test length(code00000) === length(oldcode00000)
+offset = 1
+for i in 1:length(code00000)
+    if i == length(code00000)
+        @test Meta.isexpr(code00000[i], :return)
+        @test Meta.isexpr(oldcode00000[i], :return)
+        @test code00000[i].args[1].id == (oldcode00000[i].args[1].id + offset - 1)
+    elseif Meta.isexpr(code00000[i], :gotoifnot)
+        @test Meta.isexpr(oldcode00000[i], :gotoifnot)
+        @test code00000[i].args[1] == oldcode00000[i].args[1]
+        @test code00000[i].args[2] == (oldcode00000[i].args[2] + offset)
+        global offset += 1
+    else
+        @test code00000[i] == oldcode00000[i]
+    end
+end
